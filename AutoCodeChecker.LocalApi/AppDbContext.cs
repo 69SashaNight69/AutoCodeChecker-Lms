@@ -11,6 +11,9 @@ public class AppDbContext : DbContext
 
     public DbSet<CodeTask> Tasks { get; set; }
     public DbSet<TestCase> TestCases { get; set; }
+    public DbSet<User> Users { get; set; }
+    public DbSet<StudyGroup> Groups { get; set; }
+    public DbSet<TaskResult> TaskResults { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -32,5 +35,21 @@ public class AppDbContext : DbContext
                 v => v.ToString(),
                 v => (object)v
             );
+
+        modelBuilder.Entity<StudyGroup>()
+        .HasOne(g => g.Teacher)
+        .WithMany()
+        .HasForeignKey(g => g.TeacherId)
+        .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<StudyGroup>()
+            .HasMany(g => g.Students)
+            .WithMany(u => u.Groups)
+            .UsingEntity(j => j.ToTable("GroupStudents"));
+
+        modelBuilder.Entity<StudyGroup>()
+            .HasMany(g => g.AssignedTasks)
+            .WithMany(t => t.AssignedGroups)
+            .UsingEntity(j => j.ToTable("GroupTasks"));
     }
 }

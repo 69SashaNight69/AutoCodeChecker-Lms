@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import Editor from "@monaco-editor/react";
 import ReactMarkdown from 'react-markdown';
-import { fetchTaskById, submitCodeToApi } from '../api';
+import { fetchTaskById, submitCodeToApi, fetchMyResults } from '../api';
 
 const StudentView = ({ tasks }) => {
     const [currentTask, setCurrentTask] = useState(null);
@@ -10,6 +10,21 @@ const StudentView = ({ tasks }) => {
     const [customTests, setCustomTests] = useState([{ inputs: "" }]);
     const [result, setResult] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [myResults, setMyResults] = useState([]);
+
+    useEffect(() => {
+        loadMyResults();
+    }, []);
+
+    const loadMyResults = async () => {
+        const data = await fetchMyResults();
+        setMyResults(data);
+    };
+
+    const handleExtraSubmit = async (isSubmitAll) => {
+        await submitCode(isSubmitAll);
+        if (isSubmitAll) loadMyResults();
+    };
 
     const loadTask = async (id) => {
         setLoading(true);
@@ -42,14 +57,34 @@ const StudentView = ({ tasks }) => {
 
     return (
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-            {/* Sidebar */}
             <div style={sidebarStyle}>
-                <h3>📋 Завдання</h3>
-                {tasks.map(t => (
-                    <div key={t.Id} onClick={() => loadTask(t.Id)} style={{ ...taskItemStyle, background: currentTask?.Id === t.Id ? "#37373d" : "transparent" }}>
-                        {t.Title}
-                    </div>
-                ))}
+                <h3 style={{ color: "#4db8ff" }}>📋 Завдання</h3>
+                <div style={{ maxHeight: "40%", overflowY: "auto", marginBottom: "20px" }}>
+                    {tasks.map(t => (
+                        <div key={t.Id || t.id} onClick={() => loadTask(t.Id || t.id)} style={taskItemStyle}>
+                            {t.Title || t.title}
+                        </div>
+                    ))}
+                </div>
+
+                {/* БЛОК: МОЇ ОЦІНКИ */}
+                <h3 style={{ color: "#8ce08c", borderTop: "1px solid #444", paddingTop: "15px" }}>🎓 Мої успіхи</h3>
+                <div style={{ fontSize: "12px", overflowY: "auto" }}>
+                    {myResults.length === 0 && <p style={{ color: "#555" }}>Ви ще не здали жодної задачі</p>}
+                    {myResults.map((r, i) => (
+                        <div key={i} style={{ marginBottom: "10px", padding: "8px", background: "#1a1a1a", borderRadius: "5px", border: "1px solid #333" }}>
+                            <div style={{ fontWeight: "bold", fontSize: "13px" }}>{r.Title || r.TaskTitle || r.taskTitle || "Без назви"}</div>
+                            <div style={{ color: (r.Score ?? r.score) === 100 ? "#8ce08c" : "#e08c8c", fontSize: "14px", fontWeight: "bold" }}>
+                                Оцінка: {r.Score ?? r.score}%
+                            </div>
+                            <div style={{ color: "#555", fontSize: "10px", marginTop: "4px" }}>
+                                {r.SubmittedAt || r.submittedAt
+                                    ? new Date(r.SubmittedAt || r.submittedAt).toLocaleDateString()
+                                    : "Invalid Date"}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
 
             {/* Main Area */}
@@ -62,7 +97,6 @@ const StudentView = ({ tasks }) => {
                             <div style={descStyle}>
                                 <ReactMarkdown
                                     components={{
-                                        // Ця частина автоматично стилізує всі картинки з Markdown
                                         img: ({ node, ...props }) => (
                                             <img
                                                 {...props}
@@ -159,7 +193,6 @@ const StudentView = ({ tasks }) => {
     );
 };
 
-// Короткі стилі для StudentView
 const sidebarStyle = { width: "250px", background: "#252526", padding: "15px", borderRight: "1px solid #444" };
 const taskItemStyle = { padding: "10px", cursor: "pointer", borderRadius: "5px", marginBottom: "5px" };
 const descStyle = { background: "#2d2d2d", padding: "15px", borderRadius: "8px" };

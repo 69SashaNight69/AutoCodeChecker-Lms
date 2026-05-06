@@ -1,4 +1,5 @@
 ﻿using AutoCodeChecker.Core.Models;
+using System.Text.Json.Serialization;
 
 public class CodeTask
 {
@@ -8,4 +9,10 @@ public class CodeTask
     public string InitialCode { get; set; } = "";
 
     public List<TestCase> TestCases { get; set; } = new();
+
+    [JsonIgnore]
+    public List<StudyGroup> AssignedGroups { get; set; } = new();
+
+    [JsonIgnore]
+    public List<TaskResult> Results { get; set; } = new();
 }

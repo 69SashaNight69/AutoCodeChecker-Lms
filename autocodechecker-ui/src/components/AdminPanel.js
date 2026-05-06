@@ -1,9 +1,11 @@
 ﻿import React, { useState, useEffect } from 'react';
 import Editor from "@monaco-editor/react";
-import { saveTaskToApi, fetchTasks, fetchTaskById, deleteTaskFromApi } from '../api';
+import { fetchTasks, fetchTaskById, saveTaskToApi, deleteTaskFromApi, fetchTeacherResults } from '../api';
 
 const AdminPanel = ({ onTaskAdded }) => {
     const [tasks, setTasks] = useState([]);
+    const [results, setResults] = useState([]);
+    const [view, setView] = useState("tasks");
 
     const [task, setTask] = useState({
         title: "",
@@ -17,18 +19,19 @@ const AdminPanel = ({ onTaskAdded }) => {
 
     useEffect(() => {
         loadTasks();
-    }, []);
+        if (view === "journal") loadResults();
+    }, [view]);
 
-    const loadTasks = async () => {
-        const data = await fetchTasks();
-        setTasks(data || []);
+    const loadTasks = async () => setTasks(await fetchTasks());
+    const loadResults = async () => {
+        const data = await fetchTeacherResults();
+        setResults(data);
     };
 
     const handleEditClick = async (taskSummary) => {
         try {
             const id = taskSummary.Id || taskSummary.id;
             const fullTask = await fetchTaskById(id);
-
             setTask({
                 ...fullTask,
                 Id: id,
@@ -38,20 +41,17 @@ const AdminPanel = ({ onTaskAdded }) => {
                 testCases: fullTask.TestCases || fullTask.testCases || []
             });
         } catch (error) {
-            console.error("Помилка завантаження задачі:", error);
-            alert("Не вдалося завантажити повні дані задачі.");
+            alert("Не вдалося завантажити дані задачі.");
         }
     };
 
     const handleSave = async () => {
         const title = task.title || task.Title;
         const currentTests = task.testCases || task.TestCases || [];
-
         if (!title || currentTests.length === 0) {
             alert("Заповніть назву та додайте тести!");
             return;
         }
-
         try {
             await saveTaskToApi(task);
             alert((task.Id || task.id) ? "Задачу оновлено!" : "Задачу створено!");
@@ -84,108 +84,155 @@ const AdminPanel = ({ onTaskAdded }) => {
     const displayTests = task.testCases || task.TestCases || [];
 
     return (
-        <div style={styles.mainWrapper}>
-            {/* Ліва панель: Список існуючих задач */}
-            <div style={styles.sidebar}>
-                <h3 style={{ color: "#888", fontSize: "14px" }}>КЕРУВАННЯ ЗАДАЧАМИ</h3>
-                <button onClick={resetForm} style={styles.newBtn}>+ Створити нову</button>
-                <div style={styles.taskList}>
-                    {tasks.map(t => (
-                        <div key={t.Id || t.id} style={{
-                            ...styles.taskItem,
-                            borderLeft: (task.Id === t.Id || task.id === t.id) ? "4px solid #4db8ff" : "none"
-                        }}>
-                            <span style={styles.taskTitle}>{t.Title || t.title}</span>
-                            <div style={styles.actions}>
-                                <button onClick={() => handleEditClick(t)} style={styles.iconBtn}>✎</button>
-                                <button onClick={() => handleDelete(t.Id || t.id)} style={styles.iconBtnDel}>✕</button>
-                            </div>
-                        </div>
-                    ))}
-                </div>
+        <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 70px)", background: "#121212" }}>
+
+            {/* ВЕРХНЯ ПАНЕЛЬ ПЕРЕМИКАННЯ (TABS) */}
+            <div style={styles.tabBar}>
+                <button
+                    onClick={() => setView("tasks")}
+                    style={{ ...styles.tabBtn, borderBottom: view === "tasks" ? "3px solid #4db8ff" : "3px solid transparent", color: view === "tasks" ? "#4db8ff" : "#888" }}
+                >
+                    🔧 Керування задачами
+                </button>
+                <button
+                    onClick={() => setView("journal")}
+                    style={{ ...styles.tabBtn, borderBottom: view === "journal" ? "3px solid #4db8ff" : "3px solid transparent", color: view === "journal" ? "#4db8ff" : "#888" }}
+                >
+                    📊 Журнал оцінок
+                </button>
             </div>
 
-            {/* Права панель: Форма редагування */}
-            <div style={styles.container}>
-                <div style={styles.content}>
-                    <h2 style={{ color: "#4db8ff" }}>
-                        {(task.Id || task.id) ? "📝 Редагування задачі" : "⚙ Налаштування нової задачі"}
-                    </h2>
-                    <div style={styles.grid}>
-                        <div style={styles.card}>
-                            <h4>Основна інформація</h4>
-                            <input
-                                placeholder="Назва"
-                                style={styles.input}
-                                value={task.title || task.Title || ""}
-                                onChange={e => setTask({ ...task, title: e.target.value, Title: e.target.value })}
-                            />
-                            <textarea
-                                placeholder="Опис (Markdown)"
-                                style={styles.textarea}
-                                value={task.description || task.Description || ""}
-                                onChange={e => setTask({ ...task, description: e.target.value, Description: e.target.value })}
-                            />
-                        </div>
-                        <div style={styles.card}>
-                            <h4>Тест-кейси</h4>
-                            <div style={styles.testInputGroup}>
-                                <input placeholder="In (5|6)" value={testIn} style={styles.input} onChange={e => setTestIn(e.target.value)} />
-                                <input placeholder="Out" value={testOut} style={styles.input} onChange={e => setTestOut(e.target.value)} />
-                                <button onClick={() => {
-                                    const currentTests = task.testCases || task.TestCases || [];
-                                    const newTests = [...currentTests, { inputs: testIn.split("|"), expectedOutput: testOut }];
-                                    setTask({ ...task, testCases: newTests, TestCases: newTests });
-                                    setTestIn(""); setTestOut("");
-                                }} style={styles.addBtn}>+</button>
-                            </div>
-                            <div style={styles.testList}>
-                                {displayTests.map((tc, i) => (
-                                    <div key={i} style={styles.testRow}>
-                                        <span>{(tc.inputs || tc.Inputs || []).join(" | ")} → {tc.expectedOutput || tc.ExpectedOutput}</span>
-                                        <button onClick={() => {
-                                            const filtered = displayTests.filter((_, idx) => idx !== i);
-                                            setTask({ ...task, testCases: filtered, TestCases: filtered });
-                                        }} style={styles.delBtn}>✕</button>
+            <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+
+                {/* ВІДОБРАЖЕННЯ ЗАДАЧ (Твій існуючий код) */}
+                {view === "tasks" ? (
+                    <>
+                        <div style={styles.sidebar}>
+                            <h3 style={{ color: "#888", fontSize: "12px", letterSpacing: "1px" }}>СПИСОК ЗАДАЧ</h3>
+                            <button onClick={resetForm} style={styles.newBtn}>+ Створити нову</button>
+                            <div style={styles.taskList}>
+                                {tasks.map(t => (
+                                    <div key={t.Id || t.id} style={{
+                                        ...styles.taskItem,
+                                        borderLeft: (task.Id === (t.Id || t.id)) ? "4px solid #4db8ff" : "none"
+                                    }}>
+                                        <span style={styles.taskTitle}>{t.Title || t.title}</span>
+                                        <div style={styles.actions}>
+                                            <button onClick={() => handleEditClick(t)} style={styles.iconBtn}>✎</button>
+                                            <button onClick={() => handleDelete(t.Id || t.id)} style={styles.iconBtnDel}>✕</button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
+
+                        <div style={styles.container}>
+                            <div style={styles.content}>
+                                <h2 style={{ color: "#4db8ff", marginTop: 0 }}>
+                                    {(task.Id || task.id) ? "📝 Редагування" : "⚙ Нова задача"}
+                                </h2>
+                                <div style={styles.grid}>
+                                    <div style={styles.card}>
+                                        <h4 style={styles.cardLabel}>Основна інформація</h4>
+                                        <input placeholder="Назва" style={styles.input} value={task.title || task.Title || ""} onChange={e => setTask({ ...task, title: e.target.value, Title: e.target.value })} />
+                                        <textarea placeholder="Опис (Markdown)" style={styles.textarea} value={task.description || task.Description || ""} onChange={e => setTask({ ...task, description: e.target.value, Description: e.target.value })} />
+                                    </div>
+                                    <div style={styles.card}>
+                                        <h4 style={styles.cardLabel}>Тест-кейси</h4>
+                                        <div style={styles.testInputGroup}>
+                                            <input placeholder="In (5|6)" value={testIn} style={styles.input} onChange={e => setTestIn(e.target.value)} />
+                                            <input placeholder="Out" value={testOut} style={styles.input} onChange={e => setTestOut(e.target.value)} />
+                                            <button onClick={() => {
+                                                const currentTests = task.testCases || task.TestCases || [];
+                                                const newTests = [...currentTests, { inputs: testIn.split("|"), expectedOutput: testOut }];
+                                                setTask({ ...task, testCases: newTests, TestCases: newTests });
+                                                setTestIn(""); setTestOut("");
+                                            }} style={styles.addBtn}>+</button>
+                                        </div>
+                                        <div style={styles.testList}>
+                                            {displayTests.map((tc, i) => (
+                                                <div key={i} style={styles.testRow}>
+                                                    <span>{(tc.inputs || tc.Inputs || []).join(" | ")} → {tc.expectedOutput || tc.ExpectedOutput}</span>
+                                                    <button onClick={() => {
+                                                        const filtered = displayTests.filter((_, idx) => idx !== i);
+                                                        setTask({ ...task, testCases: filtered, TestCases: filtered });
+                                                    }} style={styles.delBtn}>✕</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style={styles.card}>
+                                    <h4 style={styles.cardLabel}>Шаблон коду</h4>
+                                    <Editor height="220px" defaultLanguage="csharp" theme="vs-dark" value={task.initialCode || task.InitialCode || ""} onChange={(v) => setTask({ ...task, initialCode: v, InitialCode: v })} />
+                                </div>
+                                <button onClick={handleSave} style={styles.saveBtn}>
+                                    {(task.Id || task.id) ? "💾 Оновити задачу" : "🚀 Опублікувати"}
+                                </button>
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    /* ВІДОБРАЖЕННЯ ЖУРНАЛУ */
+                    <div style={{ flex: 1, padding: "30px", overflowY: "auto" }}>
+                        <div style={styles.card}>
+                            <h2 style={{ color: "#4db8ff", marginTop: 0 }}>📊 Журнал успішності</h2>
+                            <table style={styles.table}>
+                                <thead>
+                                    <tr style={styles.tableHead}>
+                                        <th style={styles.th}>Студент</th>
+                                        <th style={styles.th}>Завдання</th>
+                                        <th style={styles.th}>Оцінка</th>
+                                        <th style={styles.th}>Дата здачі</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {results.length === 0 && <tr><td colSpan="4" style={{ padding: "20px", textAlign: "center", color: "#555" }}>Даних поки немає</td></tr>}
+                                    {results.map((r, i) => (
+                                        <tr key={i} style={styles.tableRow}>
+                                            <td style={styles.td}>{r.StudentName || r.studentName}</td>
+                                            <td style={styles.td}>{r.TaskTitle || r.taskTitle}</td>
+                                            <td style={{ ...styles.td, color: (r.Score ?? r.score) === 100 ? "#8ce08c" : "#e08c8c", fontWeight: "bold" }}>
+                                                {r.Score ?? r.score}%
+                                            </td>
+                                            <td style={{ ...styles.td, color: "#666" }}>
+                                                {r.SubmittedAt || r.submittedAt
+                                                    ? new Date(r.SubmittedAt || r.submittedAt).toLocaleString()
+                                                    : "Немає дати"}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div style={styles.card}>
-                        <h4>Стартовий шаблон коду</h4>
-                        <Editor
-                            height="250px"
-                            defaultLanguage="csharp"
-                            theme="vs-dark"
-                            value={task.initialCode || task.InitialCode || ""}
-                            onChange={(v) => setTask({ ...task, initialCode: v, InitialCode: v })}
-                        />
-                    </div>
-                    <button onClick={handleSave} style={styles.saveBtn}>
-                        {(task.Id || task.id) ? "💾 Оновити задачу" : "🚀 Опублікувати задачу"}
-                    </button>
-                </div>
+                )}
             </div>
         </div>
     );
 };
 
 const styles = {
-    mainWrapper: { display: "flex", height: "calc(100vh - 70px)", background: "#121212" },
+    tabBar: { display: "flex", background: "#1e1e1e", borderBottom: "1px solid #333", padding: "0 20px" },
+    tabBtn: { background: "none", border: "none", padding: "15px 20px", cursor: "pointer", fontWeight: "bold", fontSize: "14px", transition: "0.2s" },
+    table: { width: "100%", borderCollapse: "collapse" },
+    tableHead: { borderBottom: "2px solid #333", textAlign: "left" },
+    th: { padding: "12px", color: "#888", fontSize: "13px", textTransform: "uppercase" },
+    tableRow: { borderBottom: "1px solid #222" },
+    td: { padding: "12px", fontSize: "14px" },
+    cardLabel: { margin: "0 0 10px 0", color: "#666", fontSize: "12px", textTransform: "uppercase" },
     sidebar: { width: "300px", background: "#181818", borderRight: "1px solid #333", padding: "20px", overflowY: "auto" },
-    newBtn: { width: "100%", padding: "10px", background: "#444", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", marginBottom: "20px" },
+    newBtn: { width: "100%", padding: "10px", background: "#333", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", marginBottom: "20px", fontSize: "13px" },
     taskList: { display: "flex", flexDirection: "column", gap: "10px" },
     taskItem: { background: "#222", padding: "10px", borderRadius: "5px", display: "flex", justifyContent: "space-between", alignItems: "center" },
-    taskTitle: { fontSize: "14px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "180px" },
+    taskTitle: { fontSize: "14px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "160px" },
     actions: { display: "flex", gap: "5px" },
     iconBtn: { background: "#333", border: "none", color: "white", cursor: "pointer", padding: "5px 8px", borderRadius: "3px" },
     iconBtnDel: { background: "#422", border: "none", color: "#f44", cursor: "pointer", padding: "5px 8px", borderRadius: "3px" },
-
     container: { flex: 1, padding: "20px", overflowY: "auto" },
     content: { maxWidth: "1100px", margin: "0 auto" },
     grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" },
-    card: { background: "#1e1e1e", padding: "15px", borderRadius: "10px", border: "1px solid #333" },
+    card: { background: "#1e1e1e", padding: "20px", borderRadius: "10px", border: "1px solid #333" },
     input: { width: "100%", padding: "10px", marginBottom: "10px", background: "#2d2d2d", color: "white", border: "1px solid #444", borderRadius: "5px", boxSizing: "border-box" },
     textarea: { width: "100%", height: "150px", background: "#2d2d2d", color: "white", border: "1px solid #444", borderRadius: "5px", resize: "none" },
     testInputGroup: { display: "flex", gap: "10px" },
