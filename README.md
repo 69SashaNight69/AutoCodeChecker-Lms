@@ -1,0 +1,1 @@
+# AutoCodeChecker.Lambda.Assessment
