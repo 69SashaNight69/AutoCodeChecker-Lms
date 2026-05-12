@@ -61,7 +61,7 @@ function App() {
                 {user.User.Role === 1 ? (
                     <AdminPanel onTaskAdded={refreshTasks} />
                 ) : (
-                    <StudentView tasks={tasks} />
+                    <StudentView tasks={tasks} onRefresh={refreshTasks} />
                 )}
             </main>
         </div>

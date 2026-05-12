@@ -81,12 +81,36 @@ export const deleteTaskFromApi = async (id) => {
     return res;
 };
 
-export const fetchTeacherResults = async () => {
-    const res = await fetch(`${API_URL}/teacher/results`, { headers: getHeaders() });
+export const fetchTeacherResults = async (search = "", group = "", sortBy = "date") => {
+    const params = new URLSearchParams({ search, group, sortBy }).toString();
+    const res = await fetch(`${API_URL}/teacher/results?${params}`, { headers: getHeaders() });
     return res.json();
 };
 
 export const fetchMyResults = async () => {
     const res = await fetch(`${API_URL}/student/my-results`, { headers: getHeaders() });
+    return res.json();
+};
+
+export const joinGroup = async (code) => {
+    const res = await fetch(`${API_URL}/groups/join`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({ code })
+    });
+    if (!res.ok) throw new Error("Невірний код");
+    return res.json();
+};
+
+export const fetchTeacherGroups = async () => {
+    const res = await fetch(`${API_URL}/teacher/groups`, { headers: getHeaders() });
+    return res.json();
+};
+
+export const fetchGroupStudents = async (groupId) => {
+    const res = await fetch(`${API_URL}/teacher/groups/${groupId}/students`, {
+        headers: getHeaders()
+    });
+    if (!res.ok) throw new Error("Не вдалося завантажити студентів");
     return res.json();
 };

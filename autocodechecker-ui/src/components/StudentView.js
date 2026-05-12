@@ -2,15 +2,18 @@
 import React, { useState, useEffect } from 'react';
 import Editor from "@monaco-editor/react";
 import ReactMarkdown from 'react-markdown';
-import { fetchTaskById, submitCodeToApi, fetchMyResults } from '../api';
+import { fetchTaskById, submitCodeToApi, fetchMyResults, joinGroup } from '../api';
 
-const StudentView = ({ tasks }) => {
+const StudentView = ({ tasks, onRefresh }) => {
     const [currentTask, setCurrentTask] = useState(null);
     const [code, setCode] = useState("");
     const [customTests, setCustomTests] = useState([{ inputs: "" }]);
     const [result, setResult] = useState(null);
     const [loading, setLoading] = useState(false);
     const [myResults, setMyResults] = useState([]);
+    const [groupCode, setGroupCode] = useState("");
+
+    const [expandedGroups, setExpandedGroups] = useState({ "Загальні завдання": true });
 
     useEffect(() => {
         loadMyResults();
@@ -21,16 +24,23 @@ const StudentView = ({ tasks }) => {
         setMyResults(data);
     };
 
-    const handleExtraSubmit = async (isSubmitAll) => {
-        await submitCode(isSubmitAll);
-        if (isSubmitAll) loadMyResults();
+    const handleJoinGroup = async () => {
+        if (!groupCode.trim()) return;
+        try {
+            await joinGroup(groupCode);
+            alert("Ви успішно приєдналися до групи!");
+            setGroupCode("");
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            alert("Помилка: невірний код");
+        }
     };
 
     const loadTask = async (id) => {
         setLoading(true);
         const data = await fetchTaskById(id);
         setCurrentTask(data);
-        setCode(data.InitialCode);
+        setCode(data.InitialCode || data.initialCode);
         setResult(null);
         setLoading(false);
     };
@@ -38,7 +48,8 @@ const StudentView = ({ tasks }) => {
     const submitCode = async (isSubmitAll) => {
         const validTests = customTests.filter(t => t.inputs.trim() !== "");
         if (!isSubmitAll && validTests.length === 0) {
-            alert("Введіть хоча б один тест!"); return;
+            alert("Введіть хоча б один тест!");
+            return;
         }
 
         setLoading(true);
@@ -48,158 +59,217 @@ const StudentView = ({ tasks }) => {
                 SourceCode: code,
                 CustomTests: !isSubmitAll ? validTests.map(t => ({ Inputs: t.inputs.split("|") })) : null
             };
+
             const data = await submitCodeToApi(payload);
             data.isRunOnly = !isSubmitAll;
             setResult(data);
-        } catch (e) { alert("Помилка!"); }
-        setLoading(false);
+
+            if (isSubmitAll) {
+                loadMyResults();
+            }
+        } catch (e) {
+            alert("Помилка при відправці коду!");
+        } finally {
+            setLoading(false);
+        }
     };
 
+    const groupedTasks = tasks.reduce((acc, task) => {
+        const gName = task.GroupName || "Загальні завдання";
+        if (!acc[gName]) acc[gName] = [];
+        acc[gName].push(task);
+        return acc;
+    }, {});
+
     return (
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <div style={{ display: "flex", flex: 1, overflow: "hidden", height: "calc(100vh - 65px)" }}>
+
+            {/* SIDEBAR: ЗАВДАННЯ ТА ГРУПИ */}
             <div style={sidebarStyle}>
-                <h3 style={{ color: "#4db8ff" }}>📋 Завдання</h3>
-                <div style={{ maxHeight: "40%", overflowY: "auto", marginBottom: "20px" }}>
-                    {tasks.map(t => (
-                        <div key={t.Id || t.id} onClick={() => loadTask(t.Id || t.id)} style={taskItemStyle}>
-                            {t.Title || t.title}
+                <h3 style={{ color: "#4db8ff", marginTop: 0 }}>📋 Завдання</h3>
+
+                <div style={{ flex: 1, overflowY: "auto", marginBottom: "15px" }}>
+                    {Object.keys(groupedTasks).map(groupName => (
+                        <div key={groupName} style={{ marginBottom: "10px" }}>
+                            {/* Заголовок папки */}
+                            <div
+                                onClick={() => setExpandedGroups({ ...expandedGroups, [groupName]: !expandedGroups[groupName] })}
+                                style={{ background: "#333", padding: "8px", cursor: "pointer", borderRadius: "4px", fontSize: "13px", fontWeight: "bold", marginBottom: "5px" }}
+                            >
+                                {expandedGroups[groupName] ? "▼" : "▶"} {groupName}
+                            </div>
+
+                            {/* Задачі в середині папки */}
+                            {expandedGroups[groupName] && groupedTasks[groupName].map(t => (
+                                <div
+                                    key={t.Id || t.id}
+                                    onClick={() => loadTask(t.Id || t.id)}
+                                    style={{
+                                        padding: "8px 15px", cursor: "pointer", borderRadius: "4px", fontSize: "13px", marginBottom: "2px",
+                                        background: currentTask?.Id === (t.Id || t.id) ? "#37373d" : "transparent",
+                                        borderLeft: currentTask?.Id === (t.Id || t.id) ? "3px solid #4db8ff" : "3px solid transparent"
+                                    }}
+                                >
+                                    {t.Title || t.title}
+                                </div>
+                            ))}
                         </div>
                     ))}
                 </div>
 
-                {/* БЛОК: МОЇ ОЦІНКИ */}
+                <div style={joinGroupCard}>
+                    <h4 style={{ margin: "0 0 8px 0", fontSize: "11px", color: "#888", textTransform: "uppercase" }}>Приєднатися до групи</h4>
+                    <div style={{ display: "flex", gap: "5px" }}>
+                        <input placeholder="Код ABC123" value={groupCode} onChange={e => setGroupCode(e.target.value)} style={smallInputStyle} />
+                        <button onClick={handleJoinGroup} style={okBtn}>OK</button>
+                    </div>
+                </div>
+
                 <h3 style={{ color: "#8ce08c", borderTop: "1px solid #444", paddingTop: "15px" }}>🎓 Мої успіхи</h3>
-                <div style={{ fontSize: "12px", overflowY: "auto" }}>
-                    {myResults.length === 0 && <p style={{ color: "#555" }}>Ви ще не здали жодної задачі</p>}
+                <div style={{ height: "180px", overflowY: "auto" }}>
+                    {myResults.length === 0 && <p style={{ color: "#555", fontSize: "12px" }}>Ще немає зданих робіт</p>}
                     {myResults.map((r, i) => (
-                        <div key={i} style={{ marginBottom: "10px", padding: "8px", background: "#1a1a1a", borderRadius: "5px", border: "1px solid #333" }}>
-                            <div style={{ fontWeight: "bold", fontSize: "13px" }}>{r.Title || r.TaskTitle || r.taskTitle || "Без назви"}</div>
-                            <div style={{ color: (r.Score ?? r.score) === 100 ? "#8ce08c" : "#e08c8c", fontSize: "14px", fontWeight: "bold" }}>
-                                Оцінка: {r.Score ?? r.score}%
-                            </div>
-                            <div style={{ color: "#555", fontSize: "10px", marginTop: "4px" }}>
-                                {r.SubmittedAt || r.submittedAt
-                                    ? new Date(r.SubmittedAt || r.submittedAt).toLocaleDateString()
-                                    : "Invalid Date"}
-                            </div>
+                        <div key={i} style={resultCardSmall}>
+                            <div style={{ fontWeight: "bold" }}>{r.Title || r.TaskTitle}</div>
+                            <div style={{ color: (r.Score ?? r.score) === 100 ? "#8ce08c" : "#e08c8c" }}>Оцінка: {r.Score ?? r.score}%</div>
                         </div>
                     ))}
                 </div>
             </div>
 
-            {/* Main Area */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px", overflowY: "auto" }}>
+            {/* ОСНОВНА ЧАСТИНА: ОПИС ТА РЕДАКТОР */}
+            <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
                 {currentTask ? (
-                    <div style={{ display: "flex", gap: "20px", height: "100%" }}>
-                        {/* ЛІВА ЧАСТИНА: ОПИС ЗАДАЧІ ТА ФОТО */}
-                        <div style={{ flex: 1, overflowY: "auto", paddingRight: "10px" }}>
+                    <div style={{ display: "flex", width: "100%", height: "100%" }}>
+
+                        {/* ЛІВО: ОПИС */}
+                        <div style={{ flex: 1, overflowY: "auto", padding: "20px", borderRight: "1px solid #333" }}>
                             <h2 style={{ marginTop: 0 }}>{currentTask.Title || currentTask.title}</h2>
                             <div style={descStyle}>
-                                <ReactMarkdown
-                                    components={{
-                                        img: ({ node, ...props }) => (
-                                            <img
-                                                {...props}
-                                                style={{ maxWidth: "100%", height: "auto", borderRadius: "8px", marginTop: "15px", display: "block", boxShadow: "0 4px 10px rgba(0,0,0,0.3)" }}
-                                                onError={(e) => { e.target.src = "https://via.placeholder.com/400x200?text=Image+Load+Error"; }}
-                                            />
-                                        )
-                                    }}
-                                >
+                                <ReactMarkdown components={{
+                                    img: ({ node, ...props }) => <img {...props} style={{ maxWidth: "100%", borderRadius: "8px", marginTop: "15px" }} />
+                                }}>
                                     {currentTask.Description || currentTask.description}
                                 </ReactMarkdown>
                             </div>
                         </div>
 
-                        {/* ПРАВА ЧАСТИНА: РЕДАКТОР ТА ТЕСТИ */}
-                        <div style={editorAreaStyle}>
-                            <div style={editorContainer}>
-                                <Editor height="100%" defaultLanguage="csharp" theme="vs-dark" value={code} onChange={setCode} options={{ fontSize: 13, minimap: { enabled: false } }} />
+                        {/* ПРАВО: РЕДАКТОР */}
+                        <div style={{
+                            flex: 1.5,
+                            display: "flex",
+                            flexDirection: "column",
+                            background: "#1a1a1b",
+                            padding: "15px",
+                            gap: "10px",
+                            height: "100%",
+                            overflow: "hidden"
+                        }}>
+
+                            {/* Поле коду) */}
+                            <div style={{
+                                flex: 1,
+                                border: "1px solid #444",
+                                borderRadius: "8px",
+                                overflow: "hidden",
+                                minHeight: "150px"
+                            }}>
+                                <Editor
+                                    height="100%"
+                                    defaultLanguage="csharp"
+                                    theme="vs-dark"
+                                    value={code}
+                                    onChange={setCode}
+                                    options={{ fontSize: 14, minimap: { enabled: false }, scrollBeyondLastLine: false }}
+                                />
                             </div>
 
-                            <div style={playgroundStyle}>
-                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                            {/* Playground */}
+                            <div style={{ ...playgroundStyle, marginTop: "0px", flexShrink: 0, resize: "vertical", overflow: "auto", height: "160px", minHeight: "100px", maxHeight: "400px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
                                     <h5 style={{ margin: 0, color: "#aaa" }}>🧪 Playground:</h5>
-                                    <button style={{ background: "none", border: "1px solid #555", color: "#ccc", cursor: "pointer", fontSize: "11px" }} onClick={() => setCustomTests([...customTests, { inputs: "" }])}>+ Add</button>
+                                    <button style={addTestBtn} onClick={() => setCustomTests([...customTests, { inputs: "" }])}>+ Add Case</button>
                                 </div>
-                                {/* підказка для тесту ввода */}
+
                                 {(currentTask.TestCases || currentTask.testCases)?.length > 0 && (
-                                    <div style={{ fontSize: "11px", color: "#8ce08c", marginBottom: "10px", fontStyle: "italic" }}>
-                                        💡 Приклад формату: <b>{(currentTask.TestCases || currentTask.testCases)[0].Inputs?.join(" | ") || (currentTask.TestCases || currentTask.testCases)[0].inputs?.join(" | ")}</b>
+                                    <div style={{ fontSize: "11px", color: "#8ce08c", marginBottom: "10px" }}>
+                                        💡 Приклад: <b>{(currentTask.TestCases || currentTask.testCases)[0].Inputs?.join(" | ")}</b>
                                     </div>
                                 )}
-                                <div style={{ maxHeight: "80px", overflowY: "auto" }}>
+
+                                <div style={{ maxHeight: "150px", overflowY: "auto" }}>
                                     {customTests.map((t, i) => (
-                                        <div key={i} style={{ display: "flex", gap: "5px", marginTop: "5px" }}>
+                                        <div key={i} style={{ display: "flex", gap: "5px", marginBottom: "5px" }}>
                                             <input value={t.inputs} style={inputStyle} onChange={e => {
                                                 const n = [...customTests]; n[i].inputs = e.target.value; setCustomTests(n);
                                             }} placeholder="Input (e.g. 5|6)" />
-                                            <button style={{ background: "#622", color: "white", border: "none", padding: "0 10px", cursor: "pointer" }} onClick={() => setCustomTests(customTests.filter((_, idx) => idx !== i))}>✕</button>
+                                            <button style={removeBtn} onClick={() => setCustomTests(customTests.filter((_, idx) => idx !== i))}>✕</button>
                                         </div>
                                     ))}
                                 </div>
-                                <div style={{ display: "flex", gap: "5px", marginTop: "10px" }}>
-                                    <button onClick={() => submitCode(false)} style={{ flex: 1, padding: "8px", cursor: "pointer", background: "#444", color: "white", border: "none" }}>Run</button>
-                                    <button onClick={() => submitCode(true)} style={{ flex: 2, padding: "8px", cursor: "pointer", background: "#007acc", color: "white", border: "none" }}>Submit</button>
+
+                                <div style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
+                                    <button onClick={() => submitCode(false)} style={btnRun}>Run Code</button>
+                                    <button onClick={() => submitCode(true)} style={btnSubmit}>Submit Solution</button>
                                 </div>
                             </div>
 
-                            {/* Results */}
+                            {/* Консоль результатів */}
                             {result && (
-                                <div style={resultStyle}>
-                                    <div style={{ fontSize: "12px", marginBottom: "5px", display: "flex", justifyContent: "space-between" }}>
-                                        <b style={{ color: result.isRunOnly ? "#4db8ff" : (result.IsSuccess ? "#8ce08c" : "#e08c8c") }}>
-                                            {result.isRunOnly ? "Output (Console):" : `Score: ${result.Score}%`}
+                                <div style={{
+                                    ...resultStyle,
+                                    marginTop: "0px",
+                                    flexShrink: 0,
+                                    resize: "vertical",
+                                    overflow: "auto",
+                                    height: "140px",
+                                    minHeight: "80px"
+                                }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+                                        <b style={{ color: result.isRunOnly ? "#4db8ff" : "#8ce08c" }}>
+                                            {result.isRunOnly ? "Console Output:" : `Score: ${result.Score}%`}
                                         </b>
-                                        <span onClick={() => setResult(null)} style={{ cursor: "pointer", color: "#888" }}>✕ close</span>
+                                        <span onClick={() => setResult(null)} style={{ cursor: "pointer", color: "#666" }}>✕</span>
                                     </div>
-
-                                    <div style={{ overflowY: "auto", maxHeight: "150px", fontSize: "12px", fontFamily: "monospace" }}>
+                                    <div style={{ fontFamily: "monospace", fontSize: "13px" }}>
                                         {result.TestResults.map((tr, i) => (
-                                            <div key={i} style={{ marginBottom: "5px", borderBottom: "1px solid #333", paddingBottom: "4px" }}>
-                                                <span style={{ color: result.isRunOnly ? "#4db8ff" : (tr.IsSuccess ? "#8ce08c" : "#e08c8c") }}>
-                                                    {result.isRunOnly ? "▶" : (tr.IsSuccess ? "✓" : "✗")}
-                                                </span>
-                                                <span style={{ marginLeft: "8px" }}>
-                                                    In:({tr.Input}) →
-                                                </span>
-
-                                                <b style={{ color: tr.Actual?.includes("Time Limit") ? "#e08c8c" : "#fff", marginLeft: "5px" }}>
-                                                    {tr.Actual}
-                                                </b>
-
-                                                <span style={{ color: "#888", marginLeft: "15px", fontStyle: "italic" }}>
-                                                    ⏱ {(tr.ExecutionTimeMs || tr.executionTimeMs) < 1
-                                                        ? "< 1"
-                                                        : (tr.ExecutionTimeMs || tr.executionTimeMs)} ms
-                                                </span>
-
-                                                {!result.isRunOnly && !tr.IsSuccess && tr.Expected !== "N/A" && (
-                                                    <div style={{ color: "#888", marginLeft: "20px", marginTop: "2px" }}>
-                                                        [Expected: {tr.Expected}]
-                                                    </div>
-                                                )}
+                                            <div key={i} style={{ marginBottom: "5px", borderBottom: "1px solid #333", paddingBottom: "3px" }}>
+                                                <span style={{ color: tr.IsSuccess ? "#8ce08c" : "#e08c8c" }}>{tr.IsSuccess ? "✓" : "✗"}</span>
+                                                <span style={{ marginLeft: "10px" }}>In:({tr.Input}) → <b>{tr.Actual}</b></span>
+                                                <span style={{ color: "#666", fontSize: "11px", marginLeft: "10px" }}>⏱ {tr.ExecutionTimeMs}ms</span>
                                             </div>
                                         ))}
                                     </div>
-                                    {result.AiFeedback && <div style={{ color: "#4db8ff", fontSize: "11px", marginTop: "8px" }}>{result.AiFeedback}</div>}
+                                    {result.AiFeedback && <div style={aiFeedbackStyle}>{result.AiFeedback}</div>}
                                 </div>
                             )}
                         </div>
                     </div>
-                ) : <h3>Виберіть задачу зліва</h3>}
+                ) : (
+                    <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", color: "#555" }}>
+                        <h3>Виберіть задачу із списку ліворуч</h3>
+                    </div>
+                )}
             </div>
         </div>
     );
 };
 
-const sidebarStyle = { width: "250px", background: "#252526", padding: "15px", borderRight: "1px solid #444" };
-const taskItemStyle = { padding: "10px", cursor: "pointer", borderRadius: "5px", marginBottom: "5px" };
-const descStyle = { background: "#2d2d2d", padding: "15px", borderRadius: "8px" };
-const editorAreaStyle = { flex: 1.5, display: "flex", flexDirection: "column", gap: "10px" };
-const editorContainer = { flex: 1, border: "1px solid #444", borderRadius: "8px", overflow: "hidden" };
-const playgroundStyle = { background: "#252526", padding: "10px", borderRadius: "8px", border: "1px solid #444" };
-const inputStyle = { flex: 1, background: "#333", color: "white", border: "1px solid #555", padding: "5px" };
-const resultStyle = { padding: "10px", background: "#1a1a1a", border: "1px solid #444", borderRadius: "8px", maxHeight: "120px" };
+const sidebarStyle = { width: "280px", background: "#252526", padding: "15px", borderRight: "1px solid #444", display: "flex", flexDirection: "column" };
+const groupHeaderStyle = { background: "#333", padding: "8px", cursor: "pointer", borderRadius: "4px", fontSize: "13px", fontWeight: "bold", marginBottom: "5px", color: "#ccc" };
+const taskItemStyle = { padding: "8px 12px", cursor: "pointer", borderRadius: "4px", marginBottom: "3px", fontSize: "13px", transition: "0.2s" };
+const joinGroupCard = { marginBottom: "20px", padding: "12px", background: "#1a1a1a", borderRadius: "8px", border: "1px solid #333" };
+const smallInputStyle = { flex: 1, background: "#333", color: "white", border: "1px solid #555", padding: "6px", borderRadius: "4px", fontSize: "12px" };
+const okBtn = { background: "#007acc", color: "white", border: "none", padding: "0 12px", borderRadius: "4px", cursor: "pointer" };
+const descStyle = { background: "#2d2d2d", padding: "20px", borderRadius: "10px", lineHeight: "1.7", color: "#ddd" };
+const playgroundStyle = { background: "#252526", padding: "15px", borderRadius: "8px", border: "1px solid #444" };
+const inputStyle = { flex: 1, background: "#333", color: "white", border: "1px solid #555", padding: "10px", borderRadius: "4px" };
+const addTestBtn = { background: "none", border: "1px solid #555", color: "#aaa", cursor: "pointer", fontSize: "11px", padding: "4px 10px", borderRadius: "4px" };
+const removeBtn = { background: "#622", color: "white", border: "none", padding: "0 12px", borderRadius: "4px", cursor: "pointer" };
+const btnRun = { flex: 1, padding: "12px", background: "#444", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" };
+const btnSubmit = { flex: 2, padding: "12px", background: "#007acc", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold" };
+const resultStyle = { padding: "15px", background: "#111", border: "1px solid #333", borderRadius: "8px" };
+const resultCardSmall = { padding: "8px", background: "#1a1a1a", borderRadius: "5px", marginBottom: "8px", fontSize: "12px", border: "1px solid #333" };
+const aiFeedbackStyle = { marginTop: "10px", padding: "10px", borderTop: "1px solid #333", color: "#4db8ff", fontSize: "12px", fontStyle: "italic" };
 
 export default StudentView;
