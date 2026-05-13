@@ -11,6 +11,13 @@ using System.IdentityModel.Tokens.Jwt;
 using AutoCodeChecker.Core.DTOs;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddAWSLambdaHosting(LambdaEventSource.HttpApi);
+
+var openAiKey = builder.Configuration["Secrets:OpenAIApiKey"];
+if (!string.IsNullOrEmpty(openAiKey))
+{
+    Environment.SetEnvironmentVariable("OPENAI_API_KEY", openAiKey);
+}
 
 string GenerateInviteCode()
 {
@@ -19,7 +26,7 @@ string GenerateInviteCode()
     return new string(Enumerable.Repeat(chars, 6).Select(s => s[random.Next(s.Length)]).ToArray());
 }
 
-var jwtKey = "SuperSecretKeyForAutoCodeChecker2024!";
+var jwtKey = builder.Configuration["Secrets:JwtKey"];
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -38,7 +45,10 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReact", policy =>
     {
-        policy.WithOrigins("http://localhost:3000").AllowAnyHeader().AllowAnyMethod();
+        policy.WithOrigins("http://localhost:7002")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
     });
 });
 
@@ -47,7 +57,7 @@ builder.Services.ConfigureHttpJsonOptions(options => {
 });
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql("Host=localhost;Database=autocodechecker;Username=postgres;Password=123456789"));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 var app = builder.Build();
 
@@ -224,34 +234,53 @@ app.MapPost("/api/assess", async (HttpContext context, [FromBody] Submission req
     var task = await db.Tasks.Include(t => t.TestCases).FirstOrDefaultAsync(t => t.Id == int.Parse(request.TaskId));
     if (task == null) return Results.NotFound("Task not found");
 
+    bool isRealSubmit = request.CustomTests == null || !request.CustomTests.Any();
+
     List<TestCase> casesToRun = request.CustomTests != null && request.CustomTests.Any()
         ? request.CustomTests.Select(ct => new TestCase { Inputs = ct.Inputs.Cast<object>().ToArray(), ExpectedOutput = "PLAYGROUND" }).ToList()
         : task.TestCases;
 
     var lambdaFunction = new Function();
-    var result = await lambdaFunction.EvaluateWithTests(request, casesToRun);
+    var result = await lambdaFunction.EvaluateWithTests(request, casesToRun, task.Description, isRealSubmit);
 
     if (request.CustomTests == null || !request.CustomTests.Any())
     {
-        var userId = int.Parse(context.User.FindFirst(ClaimTypes.NameIdentifier).Value);
-        var existingResult = await db.TaskResults.FirstOrDefaultAsync(r => r.StudentId == userId && r.TaskId == task.Id);
+        var userIdClaim = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+        if (userIdClaim != null)
+        {
+            var userId = int.Parse(userIdClaim.Value);
 
-        if (existingResult == null)
-        {
-            db.TaskResults.Add(new TaskResult { StudentId = userId, TaskId = task.Id, Score = result.Score, SubmittedCode = request.SourceCode, AiFeedback = result.AiFeedback ?? "" });
+            var existingResult = await db.TaskResults.FirstOrDefaultAsync(r => r.StudentId == userId && r.TaskId == task.Id);
+
+            if (existingResult == null)
+            {
+                db.TaskResults.Add(new TaskResult
+                {
+                    StudentId = userId,
+                    TaskId = task.Id,
+                    Score = result.Score,
+                    SubmittedCode = request.SourceCode,
+                    AiFeedback = result.AiFeedback ?? ""
+                });
+            }
+            else if (result.Score > existingResult.Score)
+            {
+                existingResult.Score = result.Score;
+                existingResult.SubmittedCode = request.SourceCode;
+                existingResult.AiFeedback = result.AiFeedback ?? "";
+                existingResult.SubmittedAt = DateTime.UtcNow;
+            }
+            await db.SaveChangesAsync();
         }
-        else if (result.Score > existingResult.Score)
-        {
-            existingResult.Score = result.Score;
-            existingResult.SubmittedCode = request.SourceCode;
-            existingResult.SubmittedAt = DateTime.UtcNow;
-        }
-        await db.SaveChangesAsync();
+    }
+    else
+    {
+        result.Score = 0;
     }
 
-    if (request.CustomTests != null) result.Score = 0;
     return Results.Ok(result);
 }).RequireAuthorization();
+
 
 app.MapGet("/api/teacher/results", async (string? search, string? group, string? sortBy, AppDbContext db) =>
 {

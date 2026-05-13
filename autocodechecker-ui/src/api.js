@@ -1,4 +1,4 @@
-﻿const API_URL = "http://localhost:5146/api";
+﻿const API_URL = "http://localhost:7000/api";
 
 const getHeaders = () => {
     const userData = localStorage.getItem("user");

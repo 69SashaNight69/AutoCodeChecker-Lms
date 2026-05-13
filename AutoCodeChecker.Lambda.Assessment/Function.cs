@@ -33,7 +33,7 @@ namespace AutoCodeChecker.Lambda.Assessment
             };
         }
 
-        public async Task<AssessmentResult> EvaluateWithTests(Submission input, List<TestCase> testCases)
+        public async Task<AssessmentResult> EvaluateWithTests(Submission input, List<TestCase> testCases, string taskDescription, bool includeAi)
         {
             var evaluator = new CodeEvaluator();
             var ai = new AiService();
@@ -41,7 +41,12 @@ namespace AutoCodeChecker.Lambda.Assessment
             var testResults = await evaluator.RunFullTestSuite(input.SourceCode, testCases);
 
             int passed = testResults.Count(r => r.IsSuccess);
-            string aiFeedback = await ai.GetFeedback(input.SourceCode, "Analysis of student code");
+
+            string aiFeedback = "Аналіз ШІ доступний тільки при здачі завдання.";
+            if (includeAi)
+            {
+                aiFeedback = await ai.GetFeedback(input.SourceCode, taskDescription);
+            }
 
             return new AssessmentResult
             {

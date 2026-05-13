@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.Scripting;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Encodings.Web;
 
 namespace AutoCodeChecker.Lambda.Assessment;
 
@@ -14,7 +15,6 @@ public class CodeEvaluator
         var results = new List<TestResult>();
 
         string[] forbiddenKeywords = { "File", "Directory", "Process.Start", "Socket", "Environment.Exit", "WebClient", "HttpClient" };
-
         foreach (var word in forbiddenKeywords)
         {
             if (studentCode.Contains(word))
@@ -23,7 +23,8 @@ public class CodeEvaluator
                     new TestResult {
                         IsSuccess = false,
                         Input = "Security Check",
-                        Actual = $"SECURITY VIOLATION: Use of forbidden keyword '{word}' is not allowed!"
+                        Actual = $"SECURITY VIOLATION: Use of forbidden keyword '{word}' is not allowed!",
+                        ExecutionTimeMs = 0
                     }
                 };
             }
@@ -55,7 +56,7 @@ public class CodeEvaluator
 
             var assembly = Assembly.Load(ms.ToArray());
             var type = assembly.GetTypes().FirstOrDefault(t => t.Name == "Solution")
-                       ?? throw new Exception("Клас 'Solution' не знайдено. Переконайтеся, що ваш код містить 'public class Solution'");
+                       ?? throw new Exception("Клас 'Solution' не знайдено. Додайте 'public class Solution'");
 
             var method = type.GetMethod("Execute")
                          ?? throw new Exception("Метод 'Execute' не знайдено.");
@@ -64,7 +65,7 @@ public class CodeEvaluator
 
             foreach (var tc in testCases)
             {
-                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var stopwatch = Stopwatch.StartNew();
                 try
                 {
                     var methodParams = method.GetParameters();
@@ -74,18 +75,12 @@ public class CodeEvaluator
                     {
                         var targetType = methodParams[i].ParameterType;
                         var rawValue = tc.Inputs[i];
-
-                        if (rawValue == null)
-                        {
-                            convertedInputs[i] = null;
-                            continue;
-                        }
+                        if (rawValue == null) { convertedInputs[i] = null; continue; }
 
                         string rawString = rawValue.ToString();
-
                         try
                         {
-                            convertedInputs[i] = System.Text.Json.JsonSerializer.Deserialize(rawString, targetType);
+                            convertedInputs[i] = JsonSerializer.Deserialize(rawString, targetType);
                         }
                         catch
                         {
@@ -95,57 +90,77 @@ public class CodeEvaluator
                             }
                             catch
                             {
-                                string typeName = targetType.IsGenericType ? "Список/Масив (формат [1,2,3])" : targetType.Name;
-                                throw new Exception($"Неправильний формат вводу. Параметр {i + 1} очікує тип: {typeName}");
+                                string typeName = targetType.IsGenericType ? "Список/Масив" : targetType.Name;
+                                throw new Exception($"Неправильний тип параметра {i + 1}. Очікується: {typeName}");
                             }
                         }
                     }
 
-                    var executionTask = Task.Run(() => method.Invoke(instance, convertedInputs));
+                    var executionTask = Task.Run(() =>
+                    {
+                        try
+                        {
+                            return method.Invoke(instance, convertedInputs);
+                        }
+                        catch (TargetInvocationException ex)
+                        {
+                            throw ex.InnerException ?? ex;
+                        }
+                    });
                     int timeLimitMs = 2000;
 
-                    if (await Task.WhenAny(executionTask, Task.Delay(timeLimitMs)) == executionTask)
-                    {
-                        stopwatch.Stop();
+                    var completedTask = await Task.WhenAny(executionTask, Task.Delay(timeLimitMs));
+                    stopwatch.Stop();
 
+                    if (completedTask == executionTask)
+                    {
                         if (executionTask.IsFaulted)
                         {
-                            throw executionTask.Exception.InnerException ?? executionTask.Exception;
-                        }
-
-                        var actual = executionTask.Result;
-
-                        var jsonOptions = new System.Text.Json.JsonSerializerOptions
-                        {
-                            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                        };
-
-                        string actualStr = actual != null ? System.Text.Json.JsonSerializer.Serialize(actual, jsonOptions).Trim('"') : "null";
-                        string expectedStr = tc.ExpectedOutput?.ToString()?.Trim('"') ?? "";
-
-                        bool isSuccess;
-                        if (expectedStr == "PLAYGROUND" || expectedStr == "CUSTOM_RUN")
-                        {
-                            isSuccess = true;
-                            expectedStr = "N/A";
+                            var ex = executionTask.Exception?.InnerException ?? executionTask.Exception;
+                            results.Add(new TestResult
+                            {
+                                Input = string.Join(", ", tc.Inputs),
+                                Expected = tc.ExpectedOutput?.ToString() ?? "",
+                                Actual = $"Runtime Error: {ex.Message}",
+                                IsSuccess = false,
+                                ExecutionTimeMs = Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2)
+                            });
                         }
                         else
                         {
-                            isSuccess = actualStr.Replace(" ", "") == expectedStr.Replace(" ", "");
-                        }
+                            var actual = executionTask.Result;
 
-                        results.Add(new TestResult
-                        {
-                            Input = string.Join(", ", tc.Inputs),
-                            Expected = expectedStr,
-                            Actual = actualStr,
-                            IsSuccess = isSuccess,
-                            ExecutionTimeMs = Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2)
-                        });
+                            var jsonOptions = new JsonSerializerOptions
+                            {
+                                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                            };
+
+                            string actualStr = actual != null ? JsonSerializer.Serialize(actual, jsonOptions).Trim('"') : "null";
+                            string expectedStr = tc.ExpectedOutput?.ToString()?.Trim('"') ?? "";
+
+                            bool isSuccess;
+                            if (expectedStr == "PLAYGROUND" || expectedStr == "CUSTOM_RUN" || expectedStr == "N/A")
+                            {
+                                isSuccess = true;
+                                expectedStr = "N/A";
+                            }
+                            else
+                            {
+                                isSuccess = actualStr.Replace(" ", "") == expectedStr.Replace(" ", "");
+                            }
+
+                            results.Add(new TestResult
+                            {
+                                Input = string.Join(", ", tc.Inputs),
+                                Expected = expectedStr,
+                                Actual = actualStr,
+                                IsSuccess = isSuccess,
+                                ExecutionTimeMs = Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2)
+                            });
+                        }
                     }
                     else
                     {
-                        stopwatch.Stop();
                         results.Add(new TestResult
                         {
                             Input = string.Join(", ", tc.Inputs),
@@ -156,33 +171,28 @@ public class CodeEvaluator
                         });
                     }
                 }
-                catch (TargetInvocationException ex)
-                {
-                    stopwatch.Stop();
-                    results.Add(new TestResult
-                    {
-                        Input = "Runtime Error",
-                        Actual = ex.InnerException?.Message ?? ex.Message,
-                        IsSuccess = false,
-                        ExecutionTimeMs = stopwatch.ElapsedMilliseconds
-                    });
-                }
                 catch (Exception ex)
                 {
                     stopwatch.Stop();
                     results.Add(new TestResult
                     {
-                        Input = "Conversion Error",
-                        Actual = ex.Message,
+                        Input = "Error",
+                        Actual = ex is TargetInvocationException tie ? tie.InnerException?.Message : ex.Message,
                         IsSuccess = false,
-                        ExecutionTimeMs = stopwatch.ElapsedMilliseconds
+                        ExecutionTimeMs = Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2)
                     });
                 }
             }
         }
         catch (Exception ex)
         {
-            results.Add(new TestResult { Input = "System Error", Actual = ex.Message, IsSuccess = false });
+            results.Add(new TestResult
+            {
+                Input = "System",
+                Actual = ex.Message,
+                IsSuccess = false,
+                ExecutionTimeMs = 0
+            });
         }
 
         return results;
