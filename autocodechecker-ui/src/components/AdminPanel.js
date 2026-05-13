@@ -1,6 +1,11 @@
 ﻿import React, { useState, useEffect } from 'react';
 import Editor from "@monaco-editor/react";
-import { fetchTasks, fetchTaskById, saveTaskToApi, deleteTaskFromApi, fetchTeacherResults, fetchTeacherGroups, fetchGroupStudents } from '../api';
+import {
+    fetchTasks, fetchTaskById, saveTaskToApi, deleteTaskFromApi, fetchTeacherResults, fetchTeacherGroups, fetchGroupStudents,
+    updateGroup, deleteGroup, removeStudentFromGroup } from '../api';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import html2pdf from 'html2pdf.js';
 
 const AdminPanel = ({ onTaskAdded }) => {
     const [tasks, setTasks] = useState([]);
@@ -11,6 +16,7 @@ const AdminPanel = ({ onTaskAdded }) => {
     const [groupFilter, setGroupFilter] = useState("");
     const [sortBy, setSortBy] = useState("date");
     const [selectedGroupStudents, setSelectedGroupStudents] = useState(null);
+    const [selectedCode, setSelectedCode] = useState(null);
 
     const handleBtnHover = (e, color) => {
         e.target.style.background = color;
@@ -68,48 +74,78 @@ const AdminPanel = ({ onTaskAdded }) => {
         try {
             const id = taskSummary.Id || taskSummary.id;
             const fullTask = await fetchTaskById(id);
+
+            let formattedDeadline = "";
+            const rawDate = fullTask.Deadline || fullTask.deadline;
+
+            if (rawDate) {
+                const date = new Date(rawDate);
+
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+
+                formattedDeadline = `${year}-${month}-${day}T${hours}:${minutes}`;
+            }
+
             setTask({
                 ...fullTask,
-                Id: id,
-                title: fullTask.Title || fullTask.title || "",
-                groupName: fullTask.GroupName || fullTask.groupName || "",
-                description: fullTask.Description || fullTask.description || "",
-                initialCode: fullTask.InitialCode || fullTask.initialCode || "",
-                testCases: fullTask.TestCases || fullTask.testCases || []
+                id: id,
+                title: fullTask.Title || "",
+                groupName: fullTask.GroupName || "",
+                deadline: formattedDeadline,
+                maxPoints: fullTask.MaxPoints || 100,
+                description: fullTask.Description || "",
+                initialCode: fullTask.InitialCode || "",
+                testCases: fullTask.TestCases || []
             });
         } catch (error) {
-            alert("Не вдалося завантажити дані задачі.");
+            alert("Помилка завантаження");
         }
     };
 
     const handleSave = async () => {
-        const title = task.title || task.Title;
+        const titleValue = task.title || task.Title;
         const currentTests = task.testCases || task.TestCases || [];
-        if (!title || currentTests.length === 0) {
-            alert("Заповніть назву та додайте тести!");
+        const groupNameValue = task.groupName || task.GroupName;
+        const deadlineValue = task.deadline || task.Deadline;
+
+        if (!titleValue || currentTests.length === 0) {
+            alert("Заповніть назву та додайте хоча б один тест!");
             return;
         }
-        try {
 
+        try {
             const payload = {
-                Id: task.Id || task.id,
-                Title: task.title || task.Title,
-                GroupName: task.groupName || task.GroupName,
-                Description: task.description || task.Description,
-                InitialCode: task.initialCode || task.InitialCode,
-                TestCases: task.testCases || task.TestCases || []
+                Title: titleValue,
+                Description: task.description || task.Description || "",
+                InitialCode: task.initialCode || task.InitialCode || "",
+                MaxPoints: parseInt(task.maxPoints) || 100,
+                TestCases: currentTests.map(tc => ({
+                    Inputs: tc.inputs || tc.Inputs,
+                    ExpectedOutput: tc.expectedOutput || tc.ExpectedOutput
+                })),
+                GroupName: groupNameValue && groupNameValue.trim() !== "" ? groupNameValue : null,
+                Deadline: deadlineValue && deadlineValue.trim() !== "" ? new Date(deadlineValue).toISOString() : null
             };
 
-            await saveTaskToApi(payload);
+            const dataForApi = { ...payload, Id: task.id || task.Id };
 
-            alert((task.Id || task.id)
-                ? "Задачу оновлено!"
-                : "Задачу створено!");
+            await saveTaskToApi(dataForApi);
+
+            alert((task.id || task.Id) ? "Задачу оновлено! ✅" : "Задачу створено! 🚀");
+
             resetForm();
             loadTasks();
-            onTaskAdded();
+            loadGroups();
+            if (onTaskAdded) onTaskAdded();
+
         } catch (error) {
-            alert("Помилка при збереженні.");
+            console.error("Save error details:", error);
+            const errorMsg = error.message || "Помилка при збереженні (400 Bad Request)";
+            alert(errorMsg);
         }
     };
 
@@ -140,6 +176,55 @@ const AdminPanel = ({ onTaskAdded }) => {
     }, {});
 
     const displayTests = task.testCases || task.TestCases || [];
+
+    const exportToPDF = () => {
+        const filteredResults = groupFilter
+            ? results.filter(r => (r.GroupName || r.groupName) === groupFilter)
+            : results;
+
+        if (filteredResults.length === 0) return alert("Дані відсутні");
+
+        const reportElement = document.createElement('div');
+        reportElement.innerHTML = `
+            <div style="padding: 20px; font-family: sans-serif;">
+                <h2>Звіт успішності: ${groupFilter || "Загальний"}</h2>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #eee;">
+                            <th style="border:1px solid #ddd; padding:8px;">Студент</th>
+                            <th style="border:1px solid #ddd; padding:8px;">Завдання</th>
+                            <th style="border:1px solid #ddd; padding:8px;">Оцінка (%)</th>
+                            <th style="border:1px solid #ddd; padding:8px;">Бал (/${filteredResults[0]?.MaxPoints})</th>
+                            <th style="border:1px solid #ddd; padding:8px;">Статус</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filteredResults.map(r => `
+                            <tr>
+                                <td style="border:1px solid #ddd; padding:8px;">${r.StudentName}</td>
+                                <td style="border:1px solid #ddd; padding:8px;">${r.TaskTitle}</td>
+                                <td style="border:1px solid #ddd; padding:8px; text-align:center;">${r.Score}%</td>
+                                <td style="border:1px solid #ddd; padding:8px; text-align:center; font-weight:bold;">
+                                    ${calculatePoints(r.Score, r.MaxPoints)}
+                                </td>
+                                <td style="border:1px solid #ddd; padding:8px; text-align:center; color: ${r.IsLate ? 'red' : 'green'};">
+                                    ${r.IsLate ? 'ПІЗНО' : 'ВЧАСНО'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+        const opt = { margin: 10, filename: 'report.pdf', image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4' } };
+        html2pdf().from(reportElement).set(opt).save();
+    };
+
+    const calculatePoints = (percent, max) => {
+        const p = percent ?? 0;
+        const m = max ?? 100;
+        return Math.round((p * m) / 100 * 10) / 10;
+    };
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 70px)", background: "#121212" }}>
@@ -259,23 +344,22 @@ const AdminPanel = ({ onTaskAdded }) => {
                             <div style={styles.grid}>
                                 <div style={styles.card}>
                                     <h4 style={styles.cardLabel}>Основна інформація</h4>
-                                    <input placeholder="Назва" style={styles.input} value={task.title || task.Title || ""} onChange={e => setTask({ ...task, title: e.target.value, Title: e.target.value })} />
-
-                                    {/* Поле для групи */}
+                                    
+                                    {/* Назва */}
                                     <input
                                         placeholder="Назва"
                                         style={styles.input}
-                                        value={task.title || task.Title || ""}
-                                        onChange={e => setTask({ ...task, title: e.target.value, Title: e.target.value })}
+                                        value={task.title}
+                                        onChange={e => setTask({ ...task, title: e.target.value })}
                                     />
 
-                                    {/* 2. Група з випадаючим списком */}
+                                    {/* Група */}
                                     <input
                                         list="group-options"
                                         placeholder="Призначити групі (або нова)"
                                         style={styles.input}
-                                        value={task.groupName || task.GroupName || ""}
-                                        onChange={e => setTask({ ...task, groupName: e.target.value, GroupName: e.target.value })}
+                                        value={task.groupName}
+                                        onChange={e => setTask({ ...task, groupName: e.target.value })}
                                     />
                                     <datalist id="group-options">
                                         {groups.map(g => (
@@ -283,7 +367,33 @@ const AdminPanel = ({ onTaskAdded }) => {
                                         ))}
                                     </datalist>
 
-                                    <textarea placeholder="Опис (Markdown)" style={styles.textarea} value={task.description || task.Description || ""} onChange={e => setTask({ ...task, description: e.target.value, Description: e.target.value })} />
+                                    {/* Опис */}
+                                    <textarea
+                                        placeholder="Опис (Markdown)"
+                                        style={styles.textarea}
+                                        value={task.description}
+                                        onChange={e => setTask({ ...task, description: e.target.value })}
+                                    />
+
+                                    {/* Дедлайн */}
+                                    <h4 style={styles.cardLabel}>Дедлайн (опційно)</h4>
+                                    <input
+                                        type="datetime-local"
+                                        style={styles.input}
+                                        value={task.deadline || ""}
+                                        onChange={e => setTask({ ...task, deadline: e.target.value })}
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="Макс. балів"
+                                        style={styles.input}
+                                        value={task.maxPoints || 100}
+                                        onChange={e => {
+                                            const val = e.target.value.replace(/\D/g, '');
+                                            setTask({ ...task, maxPoints: val });
+                                        }}
+                                    />
+
                                 </div>
                                 <div style={styles.card}>
                                     <h4 style={styles.cardLabel}>Тест-кейси</h4>
@@ -332,7 +442,9 @@ const AdminPanel = ({ onTaskAdded }) => {
                 <div style={{ flex: 1, padding: "30px", overflowY: "auto" }}>
                     <div style={styles.card}>
                         <h2 style={{ color: "#4db8ff", marginTop: 0 }}>📊 Журнал успішності</h2>
-
+                        <button onClick={exportToPDF} style={{ ...styles.saveBtn, width: "auto", padding: "10px 20px" }}>
+                            📄 Експорт у PDF
+                        </button>
                         {/* Панель фільтрів */}
                         <div style={styles.filterBar}>
                             <input
@@ -355,24 +467,33 @@ const AdminPanel = ({ onTaskAdded }) => {
                             <thead>
                                 <tr style={styles.tableHead}>
                                     <th style={styles.th}>Студент</th>
-                                    <th style={styles.th}>Група</th>
                                     <th style={styles.th}>Завдання</th>
-                                    <th style={styles.th}>Оцінка</th>
-                                    <th style={styles.th}>Дата</th>
+                                    <th style={styles.th}>Оцінка (%)</th>
+                                    <th style={styles.th}>Бал</th>
+                                    <th style={styles.th}>Статус</th>
+                                    <th style={styles.th}>Дія</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {results.length === 0 && <tr><td colSpan="5" style={{ padding: "20px", textAlign: "center", color: "#555" }}>Даних не знайдено</td></tr>}
                                 {results.map((r, i) => (
                                     <tr key={i} style={styles.tableRow}>
-                                        <td style={styles.td}>{r.StudentName || r.studentName}</td>
-                                        <td style={{ ...styles.td, color: "#888" }}>{r.GroupName || r.groupName || "Без групи"}</td>
-                                        <td style={styles.td}>{r.TaskTitle || r.taskTitle}</td>
-                                        <td style={{ ...styles.td, color: (r.Score ?? r.score) === 100 ? "#8ce08c" : "#e08c8c", fontWeight: "bold" }}>
-                                            {r.Score ?? r.score}%
+                                        <td style={styles.td}>{r.StudentName}</td>
+                                        <td style={styles.td}>{r.TaskTitle}</td>
+                                        <td style={styles.td}>{r.Score}%</td>
+                                        <td style={{ ...styles.td, fontWeight: "bold", color: "#4db8ff" }}>
+                                            {calculatePoints(r.Score, r.MaxPoints)} / {r.MaxPoints}
                                         </td>
-                                        <td style={{ ...styles.td, color: "#666" }}>
-                                            {new Date(r.SubmittedAt || r.submittedAt).toLocaleString()}
+                                        <td style={{ ...styles.td, color: r.IsLate ? "#ff4444" : "#8ce08c" }}>
+                                            {r.IsLate ? "⚠️ ПІЗНО" : "✅ ВЧАСНО"}
+                                        </td>
+                                        <td style={styles.td}>
+                                            <button
+                                                onClick={() => setSelectedCode(r.SubmittedCode)}
+                                                style={{ ...styles.iconBtn, width: "auto", padding: "5px 10px" }}
+                                            >
+                                                👁 Перегляд коду
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
@@ -381,16 +502,62 @@ const AdminPanel = ({ onTaskAdded }) => {
                     </div>
                 </div>
             )}
+            {selectedCode && (
+                <div style={modalOverlay}>
+                    <div style={modalContent}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+                            <h3>Код студента</h3>
+                            <button onClick={() => setSelectedCode(null)} style={{ background: "none", border: "none", color: "white", cursor: "pointer", fontSize: "20px" }}>✕</button>
+                        </div>
+                        <div style={{ height: "400px", border: "1px solid #444", borderRadius: "5px", overflow: "hidden" }}>
+                            <Editor
+                                height="100%"
+                                defaultLanguage="csharp"
+                                theme="vs-dark"
+                                value={selectedCode}
+                                options={{ readOnly: true, minimap: { enabled: false } }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* 3. ВКЛАДКА ГРУП */}
             {view === "groups" && (
                 <div style={{ flex: 1, padding: "30px", overflowY: "auto" }}>
-                    <h2 style={{ color: "#8ce08c" }}>Управління групами</h2>
+                    <h2 style={{ color: "#8ce08c" }}>👥 Управління групами</h2>
 
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
                         {groups.map(g => (
                             <div key={g.Id || g.id} style={styles.card}>
-                                <h3 style={{ margin: "0 0 10px 0", color: "#4db8ff" }}>{g.Name || g.name}</h3>
+                                {/* ЗАГОЛОВОК ГРУПИ ТА КНОПКИ КЕРУВАННЯ */}
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                                    <h3 style={{ margin: 0, color: "#4db8ff" }}>{g.Name || g.name}</h3>
+                                    <div style={{ display: "flex", gap: "5px" }}>
+                                        <button
+                                            onClick={async () => {
+                                                const newName = prompt("Введіть нову назву групи:", g.Name || g.name);
+                                                if (newName && newName !== (g.Name || g.name)) {
+                                                    await updateGroup(g.Id || g.id, { Name: newName });
+                                                    loadGroups();
+                                                }
+                                            }}
+                                            style={{ background: "#333", border: "none", color: "#ccc", cursor: "pointer", padding: "2px 6px", borderRadius: "3px" }}
+                                            title="Редагувати назву"
+                                        >✎</button>
+                                        <button
+                                            onClick={async () => {
+                                                if (window.confirm(`Видалити групу "${g.Name || g.name}"? Студенти втратять доступ до завдань цієї групи.`)) {
+                                                    await deleteGroup(g.Id || g.id);
+                                                    loadGroups();
+                                                    if (selectedGroupStudents?.groupId === (g.Id || g.id)) setSelectedGroupStudents(null);
+                                                }
+                                            }}
+                                            style={{ background: "#333", border: "none", color: "#f44", cursor: "pointer", padding: "2px 6px", borderRadius: "3px" }}
+                                            title="Видалити групу"
+                                        >✕</button>
+                                    </div>
+                                </div>
 
                                 <div style={{ background: "#252526", padding: "10px", borderRadius: "5px", marginBottom: "10px" }}>
                                     <span style={{ fontSize: "12px", color: "#888" }}>КОД ПРИЄДНАННЯ:</span>
@@ -421,11 +588,11 @@ const AdminPanel = ({ onTaskAdded }) => {
                         ))}
                     </div>
 
-                    {/* СЕКЦІЯ ПЕРЕГЛЯДУ СТУДЕНТІВ */}
+                    {/* СЕКЦІЯ ПЕРЕГЛЯДУ СТУДЕНТІВ З КНОПКОЮ ВИДАЛЕННЯ */}
                     {selectedGroupStudents && (
                         <div style={{ marginTop: "30px", background: "#1e1e1e", padding: "20px", borderRadius: "10px", border: "1px solid #4db8ff" }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-                                <h3 style={{ margin: 0 }}>Учасники групи:</h3>
+                                <h3 style={{ margin: 0 }}>Учасники групи ({selectedGroupStudents.list.length}):</h3>
                                 <button
                                     onClick={() => setSelectedGroupStudents(null)}
                                     style={{ background: "#444", color: "white", border: "none", padding: "5px 15px", borderRadius: "4px", cursor: "pointer" }}
@@ -439,9 +606,23 @@ const AdminPanel = ({ onTaskAdded }) => {
                                     <p style={{ color: "#888" }}>У цій групі ще немає студентів.</p>
                                 ) : (
                                     selectedGroupStudents.list.map(s => (
-                                        <div key={s.Id || s.id} style={{ background: "#252526", padding: "10px", borderRadius: "5px", border: "1px solid #333" }}>
-                                            <div style={{ fontWeight: "bold" }}>{s.FullName || s.fullName}</div>
-                                            <div style={{ fontSize: "12px", color: "#888" }}>{s.Email || s.email}</div>
+                                        <div key={s.Id || s.id} style={{ background: "#252526", padding: "10px", borderRadius: "5px", border: "1px solid #333", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                            <div>
+                                                <div style={{ fontWeight: "bold" }}>{s.FullName || s.fullName}</div>
+                                                <div style={{ fontSize: "11px", color: "#888" }}>{s.Email || s.email}</div>
+                                            </div>
+                                            <button
+                                                onClick={async () => {
+                                                    if (window.confirm(`Виключити студента ${s.FullName || s.fullName} з групи?`)) {
+                                                        await removeStudentFromGroup(selectedGroupStudents.groupId, s.Id || s.id);
+                                                        viewGroupStudents(selectedGroupStudents.groupId);
+                                                        loadGroups();
+                                                    }
+                                                }}
+                                                style={{ background: "none", border: "none", color: "#f44", cursor: "pointer", fontSize: "11px" }}
+                                            >
+                                                Видалити
+                                            </button>
                                         </div>
                                     ))
                                 )}
@@ -455,8 +636,10 @@ const AdminPanel = ({ onTaskAdded }) => {
     );
 };
 
+const modalOverlay = { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.8)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 };
+const modalContent = { background: "#1e1e1e", padding: "20px", borderRadius: "10px", width: "80%", maxWidth: "800px", border: "1px solid #333" };
+
 const styles = {
-    // Головна обгортка для всього компонента
     mainWrapper: {
         display: "flex",
         flexDirection: "column",
@@ -464,7 +647,7 @@ const styles = {
         background: "#121212",
         overflow: "hidden"
     },
-    // Верхня панель перемикання (Задачі / Журнал / Групи)
+
     tabBar: {
         display: "flex",
         background: "#1a1a1a",
@@ -476,7 +659,6 @@ const styles = {
     tab: { padding: "15px", background: "none", border: "none", color: "#888", cursor: "pointer" },
     activeTab: { padding: "15px", background: "none", border: "none", color: "#4db8ff", borderBottom: "2px solid #4db8ff", cursor: "pointer" },
 
-    // Лівий сайдбар (Список задач)
     sidebar: {
         width: "320px",
         minWidth: "320px",
@@ -511,10 +693,18 @@ const styles = {
         gap: "8px"
     },
 
+    iconBtnStyle: {
+        background: "#333",
+        border: "none",
+        color: "#aaa",
+        cursor: "pointer",
+        padding: "4px 8px",
+        borderRadius: "4px",
+        fontSize: "14px"
+    },
 
     content: { maxWidth: "1000px", width: "100%", margin: "0 auto" },
 
-    // Картки та поля
     grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" },
     card: {
         background: "#1e1e1e",
@@ -527,13 +717,11 @@ const styles = {
     input: { width: "100%", padding: "12px", marginBottom: "15px", background: "#2d2d2d", color: "white", border: "1px solid #444", borderRadius: "5px", boxSizing: "border-box" },
     textarea: { width: "100%", height: "150px", background: "#2d2d2d", color: "white", border: "1px solid #444", borderRadius: "5px", resize: "none", boxSizing: "border-box" },
 
-    // Елементи списку задач
     newBtn: { width: "100%", padding: "12px", background: "linear-gradient(135deg, #007acc 0%, #005a9e 100%)", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", marginBottom: "20px", fontWeight: "bold", transition: "all 0.3s ease", boxShadow: "0 4px 6px rgba(0,0,0,0.2)" },
     taskList: { display: "flex", flexDirection: "column", gap: "10px" },
     taskItem: { background: "#222", padding: "12px", borderRadius: "6px", display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #333" },
     taskTitle: { fontSize: "14px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "160px" },
 
-    // Кнопки
     actions: { display: "flex", gap: "5px" },
     iconBtn: {
         background: "#2d2d2d",
@@ -578,7 +766,6 @@ const styles = {
         opacity: 0.7
     },
 
-    // Таблиця журналу
     table: { width: "100%", borderCollapse: "collapse" },
     tableHead: { borderBottom: "2px solid #333", textAlign: "left" },
     th: { padding: "12px", color: "#888", fontSize: "13px" },

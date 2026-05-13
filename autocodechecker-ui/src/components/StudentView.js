@@ -144,7 +144,30 @@ const StudentView = ({ tasks, onRefresh }) => {
 
                         {/* ЛІВО: ОПИС */}
                         <div style={{ flex: 1, overflowY: "auto", padding: "20px", borderRight: "1px solid #333" }}>
-                            <h2 style={{ marginTop: 0 }}>{currentTask.Title || currentTask.title}</h2>
+
+                            {/* ЗАМІНИЛИ СТАРИЙ H2 НА ЦЕЙ БЛОК */}
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "15px", gap: "10px" }}>
+                                <h2 style={{ marginTop: 0, fontSize: "22px", flex: 1 }}>{currentTask.Title || currentTask.title}</h2>
+
+                                {(currentTask.Deadline || currentTask.deadline) && (
+                                    <div style={{
+                                        padding: "6px 12px",
+                                        borderRadius: "6px",
+                                        fontSize: "12px",
+                                        fontWeight: "bold",
+                                        whiteSpace: "nowrap",
+                                        background: new Date(currentTask.Deadline || currentTask.deadline) < new Date() ? "rgba(255, 68, 68, 0.1)" : "rgba(140, 224, 140, 0.1)",
+                                        color: new Date(currentTask.Deadline || currentTask.deadline) < new Date() ? "#ff4444" : "#8ce08c",
+                                        border: `1px solid ${new Date(currentTask.Deadline || currentTask.deadline) < new Date() ? "#ff4444" : "#8ce08c"}`
+                                    }}>
+                                        {new Date(currentTask.Deadline || currentTask.deadline) < new Date() ? "⌛ ТЕРМІН МИНУВ" : "🕒 ЗДАТИ ДО"}
+                                        <div style={{ fontSize: "11px", marginTop: "2px", opacity: 0.8 }}>
+                                            {new Date(currentTask.Deadline || currentTask.deadline).toLocaleString('uk-UA')}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
                             <div style={descStyle}>
                                 <ReactMarkdown components={{
                                     img: ({ node, ...props }) => <img {...props} style={{ maxWidth: "100%", borderRadius: "8px", marginTop: "15px" }} />

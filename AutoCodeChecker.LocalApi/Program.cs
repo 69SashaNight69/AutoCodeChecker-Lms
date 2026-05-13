@@ -158,7 +158,29 @@ app.MapGet("/api/tasks", async (HttpContext context, AppDbContext db) =>
 }).RequireAuthorization();
 
 app.MapGet("/api/tasks/{id}", async (int id, AppDbContext db) =>
-    await db.Tasks.Include(t => t.TestCases).FirstOrDefaultAsync(t => t.Id == id));
+{
+    var task = await db.Tasks
+        .Include(t => t.TestCases)
+        .Include(t => t.AssignedGroups)
+        .FirstOrDefaultAsync(t => t.Id == id);
+
+    if (task == null) return Results.NotFound();
+
+    return Results.Ok(new
+    {
+        task.Id,
+        task.Title,
+        task.Description,
+        task.InitialCode,
+        task.Deadline,
+        MaxPoints = task.MaxPoints,
+        TestCases = task.TestCases.Select(tc => new {
+            tc.Inputs,
+            tc.ExpectedOutput
+        }),
+        GroupName = task.AssignedGroups.FirstOrDefault()?.Name ?? ""
+    });
+});
 
 app.MapPost("/api/tasks", async (HttpContext context, [FromBody] CreateTaskDto req, AppDbContext db) =>
 {
@@ -169,6 +191,8 @@ app.MapPost("/api/tasks", async (HttpContext context, [FromBody] CreateTaskDto r
         Title = req.Title,
         Description = req.Description,
         InitialCode = req.InitialCode,
+        Deadline = req.Deadline,
+        MaxPoints = req.MaxPoints <= 0 ? 100 : req.MaxPoints,
         TestCases = req.TestCases
     };
 
@@ -252,9 +276,13 @@ app.MapGet("/api/teacher/results", async (string? search, string? group, string?
     return Results.Ok(results.Select(r => new {
         StudentName = r.Student.FullName,
         TaskTitle = r.Task.Title,
+        GroupName = r.Student.Groups.Select(g => g.Name).FirstOrDefault() ?? "Без групи",
         Score = r.Score,
         SubmittedAt = r.SubmittedAt,
-        GroupName = r.Student.Groups.FirstOrDefault()?.Name ?? "Без групи"
+        Deadline = r.Task.Deadline,
+        SubmittedCode = r.SubmittedCode,
+        MaxPoints = r.Task.MaxPoints,
+        IsLate = r.Task.Deadline.HasValue && r.SubmittedAt > r.Task.Deadline.Value
     }));
 }).RequireAuthorization();
 
@@ -304,6 +332,8 @@ app.MapPut("/api/tasks/{id:int}", async (int id, HttpContext context, [FromBody]
     task.Title = req.Title;
     task.Description = req.Description;
     task.InitialCode = req.InitialCode;
+    task.Deadline = req.Deadline;
+    task.MaxPoints = req.MaxPoints <= 0 ? 100 : req.MaxPoints;
 
     db.TestCases.RemoveRange(task.TestCases);
     task.TestCases = req.TestCases ?? new List<TestCase>();
@@ -337,6 +367,40 @@ app.MapDelete("/api/tasks/{id:int}", async (int id, AppDbContext db) =>
 
     db.Tasks.Remove(task);
     await db.SaveChangesAsync();
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPut("/api/groups/{id:int}", async (int id, [FromBody] StudyGroup updatedGroup, AppDbContext db) =>
+{
+    var group = await db.Groups.FindAsync(id);
+    if (group == null) return Results.NotFound();
+
+    group.Name = updatedGroup.Name;
+    await db.SaveChangesAsync();
+    return Results.Ok(group);
+}).RequireAuthorization();
+
+app.MapDelete("/api/groups/{id:int}", async (int id, AppDbContext db) =>
+{
+    var group = await db.Groups.FindAsync(id);
+    if (group == null) return Results.NotFound();
+
+    db.Groups.Remove(group);
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapDelete("/api/groups/{groupId:int}/students/{studentId:int}", async (int groupId, int studentId, AppDbContext db) =>
+{
+    var group = await db.Groups.Include(g => g.Students).FirstOrDefaultAsync(g => g.Id == groupId);
+    if (group == null) return Results.NotFound("Групу не знайдено");
+
+    var student = group.Students.FirstOrDefault(s => s.Id == studentId);
+    if (student != null)
+    {
+        group.Students.Remove(student);
+        await db.SaveChangesAsync();
+    }
     return Results.NoContent();
 }).RequireAuthorization();
 

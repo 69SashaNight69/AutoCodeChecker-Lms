@@ -7,5 +7,7 @@ public record CreateTaskDto(
     string Description,
     string InitialCode,
     List<TestCase> TestCases,
-    string? GroupName
+    string? GroupName,
+    DateTime? Deadline,
+    int MaxPoints
 );

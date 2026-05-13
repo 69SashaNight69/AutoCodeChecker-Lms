@@ -61,14 +61,23 @@ export const submitCodeToApi = async (payload) => {
 };
 
 export const saveTaskToApi = async (task) => {
-    const method = task.Id ? "PUT" : "POST";
-    const url = task.Id ? `${API_URL}/tasks/${task.Id}` : `${API_URL}/tasks`;
+    const { Id, id, ...taskData } = task;
+    const finalId = Id || id;
+
+    const method = finalId ? "PUT" : "POST";
+    const url = finalId ? `${API_URL}/tasks/${finalId}` : `${API_URL}/tasks`;
+
     const res = await fetch(url, {
         method: method,
         headers: getHeaders(),
-        body: JSON.stringify(task)
+        body: JSON.stringify(taskData)
     });
-    if (!res.ok) throw res;
+
+    if (!res.ok) {
+        const errorText = await res.text();
+        console.error("Server error message:", errorText);
+        throw new Error(errorText);
+    }
     return res;
 };
 
@@ -113,4 +122,23 @@ export const fetchGroupStudents = async (groupId) => {
     });
     if (!res.ok) throw new Error("Не вдалося завантажити студентів");
     return res.json();
+};
+
+export const updateGroup = async (id, data) => {
+    return fetch(`${API_URL}/groups/${id}`, {
+        method: "PUT",
+        headers: getHeaders(),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteGroup = async (id) => {
+    return fetch(`${API_URL}/groups/${id}`, { method: "DELETE", headers: getHeaders() });
+};
+
+export const removeStudentFromGroup = async (groupId, studentId) => {
+    return fetch(`${API_URL}/groups/${groupId}/students/${studentId}`, {
+        method: "DELETE",
+        headers: getHeaders()
+    });
 };

@@ -7,6 +7,9 @@ public class CodeTask
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
     public string InitialCode { get; set; } = "";
+    public DateTime? Deadline { get; set; }
+
+    public int MaxPoints { get; set; } = 100;
 
     public List<TestCase> TestCases { get; set; } = new();
 

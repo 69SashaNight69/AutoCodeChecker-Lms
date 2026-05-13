@@ -3,6 +3,7 @@ using System;
 using AutoCodeChecker.LocalApi;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AutoCodeChecker.LocalApi.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260513122534_AddMaxPoints")]
+    partial class AddMaxPoints
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -161,9 +164,6 @@ namespace AutoCodeChecker.LocalApi.Migrations
                     b.Property<string>("InitialCode")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<int>("MaxPoints")
-                        .HasColumnType("integer");
 
                     b.Property<string>("Title")
                         .IsRequired()
