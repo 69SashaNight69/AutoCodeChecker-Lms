@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AutoCodeChecker Serverless Backend (C# .NET 8)
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: dotnet8
+
+Resources:
+  AutoCodeCheckerApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./AutoCodeChecker.LocalApi/
+      Handler: AutoCodeChecker.LocalApi
+      Events:
+        ProxyApi:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+  AutoCodeCheckerDB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      DBName: autocodechecker
+      MasterUsername: postgres
+      MasterUserPassword: password123456789
+
+Outputs:
+  ApiUrl:
+    Description: "URL вашого Serverless API"
+    Value: 
+      Fn::Sub: "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/"

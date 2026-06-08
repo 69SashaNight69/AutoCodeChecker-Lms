@@ -1,4 +1,4 @@
-﻿const API_URL = "http://localhost:7000/api";
+﻿const API_URL = "https://ayzyf2ez68.execute-api.eu-north-1.amazonaws.com/Prod/api";
 
 const getHeaders = () => {
     const userData = localStorage.getItem("user");

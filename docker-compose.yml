@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16
+    container_name: acc_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456789}
+      POSTGRES_DB: autocodechecker
+      PGPORT: 7003
+    ports:
+      - "7003:7003"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: AutoCodeChecker.LocalApi/Dockerfile
+    container_name: acc_api
+    depends_on:
+      - db
+    ports:
+      - "7000:7000"
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=db;Port=7003;Database=autocodechecker;Username=postgres;Password=${DB_PASSWORD:-123456789}
+      - Secrets__JwtKey=${JWT_SECRET:-SuperSecretFallbackKey123!}
+      - Secrets__OpenAIApiKey=${OPENAI_KEY:-MISSING_KEY}
+
+  frontend:
+    build:
+      context: ./autocodechecker-ui
+    container_name: acc_ui
+    depends_on:
+      - api
+    ports:
+      - "7002:7002"
+    environment:
+      - REACT_APP_API_URL=https://ayzyf2ez68.execute-api.eu-north-1.amazonaws.com/Prod/api
+
+volumes:
+  postgres_data:

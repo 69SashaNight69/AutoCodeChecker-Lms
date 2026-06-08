@@ -11,6 +11,9 @@ public class CodeTask
 
     public int MaxPoints { get; set; } = 100;
 
+    public int? TeacherId { get; set; }
+    public User? Teacher { get; set; }
+
     public List<TestCase> TestCases { get; set; } = new();
 
     [JsonIgnore]
