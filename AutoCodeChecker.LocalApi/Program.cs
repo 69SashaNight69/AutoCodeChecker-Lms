@@ -45,7 +45,7 @@
     {
         options.AddPolicy("AllowReact", policy =>
         {
-            policy.WithOrigins("http://localhost:7002")
+            policy.WithOrigins("http://localhost:7002", "https://auto-code-checker-lms.vercel.app")
                   .AllowAnyHeader()
                   .AllowAnyMethod()
                   .AllowCredentials();
